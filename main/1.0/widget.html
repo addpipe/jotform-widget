@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pipe Video Recorder Widget for Jotform</title>
+
+  <!-- Load the Jotform widget API only once. -->
+  <script src="https://js.jotform.com/JotFormCustomWidget.min.js"></script>
+
+  <!-- Pipe recorder assets. -->
+  <link rel="stylesheet" href="https://cdn.addpipe.com/2.0/pipe.min.css">
+  <script src="https://cdn.addpipe.com/2.0/pipe.min.js"></script>
+</head>
+
+<body>
+  <div id="wrapper">
+    <div id="recorder-holder"></div>
+    <div id="status" role="status" aria-live="polite"></div>
+    <div id="video-url-display"></div>
+  </div>
+  <script>
+    (function () {
+      "use strict";
+
+      // -------------------------------------------------------------------
+      // Internal state
+      // -------------------------------------------------------------------
+
+      var recordingValue = "";
+      var recordingValid = false;
+      var recorderObject = null;
+      var initialized = false;
+      var jotformReadyReceived = false;
+
+      var statusEl = document.getElementById("status");
+      var urlDisplayEl = document.getElementById(
+        "video-url-display"
+      );
+
+      // -------------------------------------------------------------------
+      // UI helpers
+      // -------------------------------------------------------------------
+
+      function setStatus(text, kind) {
+        if (!statusEl) {
+          console.log(text);
+          return;
+        }
+
+        statusEl.textContent = text;
+        statusEl.className = kind || "";
+      }
+
+      // -------------------------------------------------------------------
+      // Jotform helpers
+      // -------------------------------------------------------------------
+
+      function isJotformApiAvailable() {
+        return Boolean(
+          window.JFCustomWidget &&
+          typeof window.JFCustomWidget.subscribe === "function"
+        );
+      }
+
+      function sendCurrentDataToJotform() {
+        if (
+          window.JFCustomWidget &&
+          typeof window.JFCustomWidget.sendData === "function"
+        ) {
+          window.JFCustomWidget.sendData({
+            value: recordingValue,
+            valid: recordingValid
+          });
+        }
+      }
+
+      function resizeJotformFrame(width, height) {
+        if (
+          window.JFCustomWidget &&
+          typeof window.JFCustomWidget.requestFrameResize ===
+            "function"
+        ) {
+          window.JFCustomWidget.requestFrameResize({
+            width: width,
+            height: height
+          });
+        }
+      }
+
+      function getJotformSettings() {
+        if (
+          !window.JFCustomWidget ||
+          typeof window.JFCustomWidget.getWidgetSettings !==
+            "function"
+        ) {
+          return {};
+        }
+
+        return (
+          window.JFCustomWidget.getWidgetSettings() || {}
+        );
+      }
+
+      function isRunningInsideIframe() {
+        try {
+          return window.self !== window.top;
+        } catch (error) {
+          return true;
+        }
+      }
+
+      // -------------------------------------------------------------------
+      // Recording result helpers
+      // -------------------------------------------------------------------
+
+      function setRecordingResult(value) {
+        recordingValue = value || "";
+        recordingValid = Boolean(recordingValue);
+
+        sendCurrentDataToJotform();
+      }
+
+      function cleanLocation(location) {
+        return String(location || "").trim().replace(/^https?:\/\//i, "").replace(/\/+$/, "");
+      }
+
+      function cleanFileName(fileName) {
+        return String(fileName || "").trim().replace(/^\/+/, "").replace(/\.mp4$/i, "");
+      }
+
+      function buildVideoUrl(accountHash, location, streamOrFileName) {
+        var cleanHost = cleanLocation(location);
+        var cleanName = cleanFileName(streamOrFileName);
+
+        if (!cleanHost || !accountHash || !cleanName) {
+          console.error(
+            "Could not build the recording URL.",
+            {
+              accountHash: accountHash,
+              location: location,
+              streamOrFileName: streamOrFileName
+            }
+          );
+
+          return "";
+        }
+
+        return ("https://" + cleanHost + "/" + accountHash + "/" + cleanName + ".mp4");
+      }
+
+      function saveRecordingUrl(accountHash, location, streamOrFileName, successMessage) {
+        var videoUrl = buildVideoUrl(accountHash, location, streamOrFileName);
+
+        if (!videoUrl) {
+          setRecordingResult("");
+
+          setStatus(
+            "The recording was saved, but its URL could not be generated.",
+            "error"
+          );
+
+          return;
+        }
+
+        setRecordingResult(videoUrl);
+        setStatus(successMessage, "success");
+      }
+
+      // -------------------------------------------------------------------
+      // Pipe recorder initialization
+      // -------------------------------------------------------------------
+
+      function initializeRecorder(settings, existingValue) {
+        if (initialized) {
+          console.warn(
+            "Recorder initialization was requested more than once."
+          );
+
+          return;
+        }
+
+        initialized = true;
+        settings = settings || {};
+
+        var accountHash = settings.accountHash || "";
+        var eid = settings.eid || "";
+        var qualityUrl = settings.qualityUrl || "avq/480p.xml";
+        var width = parseInt(settings.pipeWidth, 10) || 640;
+        var height = parseInt(settings.pipeHeight, 10) || 480;
+        var maxRecordingTime = parseInt(settings.maxRecordingTime, 10) || 600;
+        var avrec = String(settings.avrec) === "0" ? 0 : 1;
+        var allowUpload = String(settings.dup) === "0" ? 0 : 1;
+
+        console.log(
+          "Initializing Pipe recorder.",
+          {
+            accountHash: accountHash,
+            eid: eid,
+            qualityUrl: qualityUrl,
+            width: width,
+            height: height,
+            maxRecordingTime: maxRecordingTime,
+            avrec: avrec,
+            dup: allowUpload,
+            hasExistingValue: Boolean(existingValue)
+          }
+        );
+
+        if (existingValue) {
+          setRecordingResult(existingValue);
+
+          setStatus(
+            "An existing recording is on file. Record again to replace it."
+          );
+        } else {
+          setRecordingResult("");
+        }
+
+        resizeJotformFrame(
+          width,
+          height + 90
+        );
+
+        if (
+          !window.PipeSDK ||
+          typeof window.PipeSDK.insert !== "function"
+        ) {
+          console.error(
+            "PipeSDK was not loaded or PipeSDK.insert is unavailable."
+          );
+
+          setStatus(
+            "The Pipe recorder library did not load. Check the browser console and Network panel.",
+            "error"
+          );
+
+          return;
+        }
+
+        var pipeParams = {
+          size: {
+            width: width,
+            height: height
+          },
+          qualityurl: qualityUrl,
+          accountHash: accountHash,
+          eid: eid,
+          mrt: maxRecordingTime,
+          avrec: avrec,
+          dup: allowUpload
+        };
+
+        try {
+          window.PipeSDK.insert(
+            "recorder-holder",
+            pipeParams,
+            function (recObj) {
+              if (!recObj) {
+                console.error(
+                  "PipeSDK.insert completed without returning a recorder object."
+                );
+
+                setStatus(
+                  "The recorder could not be initialized.",
+                  "error"
+                );
+
+                return;
+              }
+
+              recorderObject = recObj;
+
+              resizeJotformFrame(
+                width,
+                height + 90
+              );
+
+              // -----------------------------------------------------------
+              // Desktop camera or screen recording saved
+              // -----------------------------------------------------------
+
+              recorderObject.onSaveOk = function (recorderId, streamName, streamDuration, cameraName, micName, audioCodec, videoCodec, fileType, videoId, audioOnly, location) {
+                console.log(
+                  "Pipe recording saved.",
+                  {
+                    recorderId: recorderId,
+                    streamName: streamName,
+                    streamDuration: streamDuration,
+                    fileType: fileType,
+                    videoId: videoId,
+                    audioOnly: audioOnly,
+                    location: location
+                  }
+                );
+
+                saveRecordingUrl(
+                  accountHash,
+                  location,
+                  streamName,
+                  "Recording saved."
+                );
+              };
+
+              // -----------------------------------------------------------
+              // Desktop file upload completed
+              // -----------------------------------------------------------
+
+              recorderObject.onDesktopVideoUploadSuccess = function (recorderId, filename, filetype, videoId, audioOnly, location) {
+                  console.log(
+                    "Pipe desktop upload completed.",
+                    {
+                      recorderId: recorderId,
+                      filename: filename,
+                      filetype: filetype,
+                      videoId: videoId,
+                      audioOnly: audioOnly,
+                      location: location
+                    }
+                  );
+
+                  saveRecordingUrl(
+                    accountHash,
+                    location,
+                    filename
+                  );
+                };
+
+              // -----------------------------------------------------------
+              // Mobile-native video upload completed
+              // -----------------------------------------------------------
+
+              recorderObject.onVideoUploadSuccess = function (recorderId, filename, filetype, videoId, audioOnly, location) {
+                  console.log(
+                    "Pipe mobile upload completed.",
+                    {
+                      recorderId: recorderId,
+                      filename: filename,
+                      filetype: filetype,
+                      videoId: videoId,
+                      audioOnly: audioOnly,
+                      location: location
+                    }
+                  );
+
+                  saveRecordingUrl(
+                    accountHash,
+                    location,
+                    filename
+                  );
+                };
+
+              // -----------------------------------------------------------
+              // Upload failed
+              // -----------------------------------------------------------
+
+              recorderObject.onUploadFail = function (
+                error
+              ) {
+                console.error(
+                  "Pipe upload failed.",
+                  error
+                );
+
+                setStatus(
+                  "Upload failed. Please try recording or uploading again.",
+                  "error"
+                );
+              };
+
+              // -----------------------------------------------------------
+              // Recorder initialization failed
+              // -----------------------------------------------------------
+
+              recorderObject.onRecorderInitError = function (error) {
+                  console.error(
+                    "Pipe recorder initialization error.",
+                    error
+                  );
+
+                  setStatus(
+                    "Could not start the recorder. Check camera and microphone permissions.",
+                    "error"
+                  );
+                };
+            }
+          );
+        } catch (error) {
+          console.error(
+            "PipeSDK.insert failed.",
+            error
+          );
+
+          setStatus(
+            "Recorder initialization failed. Check the browser console for details.",
+            "error"
+          );
+        }
+
+        sendCurrentDataToJotform();
+      }
+
+      // -------------------------------------------------------------------
+      // Jotform integration
+      // -------------------------------------------------------------------
+
+      if (isJotformApiAvailable()) {
+        window.JFCustomWidget.subscribe(
+          "ready",
+          function (data) {
+            jotformReadyReceived = true;
+
+            console.log(
+              "Jotform widget ready event received.",
+              data
+            );
+
+            var settings = getJotformSettings();
+
+            var existingValue =
+              data &&
+              typeof data.value === "string"
+                ? data.value
+                : "";
+
+            initializeRecorder(
+              settings,
+              existingValue
+            );
+          }
+        );
+
+        window.JFCustomWidget.subscribe(
+          "submit",
+          function () {
+            console.log(
+              "Jotform requested widget submission.",
+              {
+                valid: recordingValid,
+                value: recordingValue
+              }
+            );
+
+            window.JFCustomWidget.sendSubmit({
+              valid: recordingValid,
+              value: recordingValue
+            });
+          }
+        );
+      } else {
+        console.warn(
+          "JFCustomWidget is unavailable. Starting in standalone test mode."
+        );
+
+        initializeRecorder({}, "");
+      }
+
+      // -------------------------------------------------------------------
+      // Standalone testing fallback
+      // -------------------------------------------------------------------
+
+      if (!isRunningInsideIframe()) {
+        window.setTimeout(
+          function () {
+            if (
+              !initialized &&
+              !jotformReadyReceived
+            ) {
+              console.warn(
+                "No Jotform ready event was received. Starting standalone test mode."
+              );
+
+              initializeRecorder({}, "");
+            }
+          },
+          1000
+        );
+      }
+
+      // -------------------------------------------------------------------
+      // Last-resort diagnostic
+      // -------------------------------------------------------------------
+
+      window.setTimeout(
+        function () {
+          if (!initialized) {
+            console.error(
+              "The widget was not initialized.",
+              {
+                jotformApiAvailable:
+                  isJotformApiAvailable(),
+                runningInsideIframe:
+                  isRunningInsideIframe(),
+                pipeSdkAvailable:
+                  Boolean(window.PipeSDK)
+              }
+            );
+
+            setStatus(
+              "The widget did not initialize. Open the browser console for diagnostic information.",
+              "error"
+            );
+          }
+        },
+        5000
+      );
+    })();
+  </script>
+</body>
+</html>
+
