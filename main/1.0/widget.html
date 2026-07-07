@@ -17,7 +17,6 @@
   <div id="wrapper">
     <div id="recorder-holder"></div>
     <div id="status" role="status" aria-live="polite"></div>
-    <div id="video-url-display"></div>
   </div>
   <script>
     (function () {
@@ -34,9 +33,6 @@
       var jotformReadyReceived = false;
 
       var statusEl = document.getElementById("status");
-      var urlDisplayEl = document.getElementById(
-        "video-url-display"
-      );
 
       // -------------------------------------------------------------------
       // UI helpers
@@ -202,8 +198,7 @@
             height: height,
             maxRecordingTime: maxRecordingTime,
             avrec: avrec,
-            dup: allowUpload,
-            hasExistingValue: Boolean(existingValue)
+            dup: allowUpload
           }
         );
 
@@ -298,7 +293,7 @@
                   accountHash,
                   location,
                   streamName,
-                  "Recording saved."
+                  ""
                 );
               };
 
@@ -307,56 +302,54 @@
               // -----------------------------------------------------------
 
               recorderObject.onDesktopVideoUploadSuccess = function (recorderId, filename, filetype, videoId, audioOnly, location) {
-                  console.log(
-                    "Pipe desktop upload completed.",
-                    {
-                      recorderId: recorderId,
-                      filename: filename,
-                      filetype: filetype,
-                      videoId: videoId,
-                      audioOnly: audioOnly,
-                      location: location
-                    }
-                  );
+                console.log(
+                  "Pipe desktop upload completed.",
+                  {
+                    recorderId: recorderId,
+                    filename: filename,
+                    filetype: filetype,
+                    videoId: videoId,
+                    audioOnly: audioOnly,
+                    location: location
+                  }
+                );
 
-                  saveRecordingUrl(
-                    accountHash,
-                    location,
-                    filename
-                  );
-                };
+                saveRecordingUrl(
+                  accountHash,
+                  location,
+                  filename
+                );
+              };
 
               // -----------------------------------------------------------
               // Mobile-native video upload completed
               // -----------------------------------------------------------
 
               recorderObject.onVideoUploadSuccess = function (recorderId, filename, filetype, videoId, audioOnly, location) {
-                  console.log(
-                    "Pipe mobile upload completed.",
-                    {
-                      recorderId: recorderId,
-                      filename: filename,
-                      filetype: filetype,
-                      videoId: videoId,
-                      audioOnly: audioOnly,
-                      location: location
-                    }
-                  );
+                console.log(
+                  "Pipe mobile upload completed.",
+                  {
+                    recorderId: recorderId,
+                    filename: filename,
+                    filetype: filetype,
+                    videoId: videoId,
+                    audioOnly: audioOnly,
+                    location: location
+                  }
+                );
 
-                  saveRecordingUrl(
-                    accountHash,
-                    location,
-                    filename
-                  );
-                };
+                saveRecordingUrl(
+                  accountHash,
+                  location,
+                  filename
+                );
+              };
 
               // -----------------------------------------------------------
               // Upload failed
               // -----------------------------------------------------------
 
-              recorderObject.onUploadFail = function (
-                error
-              ) {
+              recorderObject.onUploadFail = function (error) {
                 console.error(
                   "Pipe upload failed.",
                   error
@@ -373,16 +366,16 @@
               // -----------------------------------------------------------
 
               recorderObject.onRecorderInitError = function (error) {
-                  console.error(
-                    "Pipe recorder initialization error.",
-                    error
-                  );
+                console.error(
+                  "Pipe recorder initialization error.",
+                  error
+                );
 
-                  setStatus(
-                    "Could not start the recorder. Check camera and microphone permissions.",
-                    "error"
-                  );
-                };
+                setStatus(
+                  "Could not start the recorder. Check camera and microphone permissions.",
+                  "error"
+                );
+              };
             }
           );
         } catch (error) {
@@ -396,8 +389,6 @@
             "error"
           );
         }
-
-        sendCurrentDataToJotform();
       }
 
       // -------------------------------------------------------------------
@@ -476,36 +467,7 @@
           1000
         );
       }
-
-      // -------------------------------------------------------------------
-      // Last-resort diagnostic
-      // -------------------------------------------------------------------
-
-      window.setTimeout(
-        function () {
-          if (!initialized) {
-            console.error(
-              "The widget was not initialized.",
-              {
-                jotformApiAvailable:
-                  isJotformApiAvailable(),
-                runningInsideIframe:
-                  isRunningInsideIframe(),
-                pipeSdkAvailable:
-                  Boolean(window.PipeSDK)
-              }
-            );
-
-            setStatus(
-              "The widget did not initialize. Open the browser console for diagnostic information.",
-              "error"
-            );
-          }
-        },
-        5000
-      );
     })();
   </script>
 </body>
 </html>
-
